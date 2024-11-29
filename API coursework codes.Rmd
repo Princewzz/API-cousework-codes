@@ -1,0 +1,381 @@
+---
+title: "API coursework"
+output:
+  html_document: default
+  pdf_document: default
+date: "2024-11-17"
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+dmd_apnoea <- read_table("C:/Users/liusc/OneDrive/Desktop/Year 4/ASI/Coursework/dmd-apnoea.txt")
+```
+
+
+```{r}
+library(tidyverse)
+library(ggplot2)
+#delete the row with hypo reading -99 standing for NA
+dmd_apnoea <- dmd_apnoea %>%
+  filter(hypo != -99)
+
+dmd_apnoea <- dmd_apnoea %>%
+  mutate(hypo = factor(hypo, labels = c("Absent", "Present")))
+
+ggplot(dmd_apnoea, aes(x = ageyears, y = ahi)) +
+  geom_point(size = 1) +
+  geom_point() +  
+  facet_grid(hypo ~ type) +  
+  labs(
+    x = "Age (years)",
+    y = "AHI (Apnea-Hypopnea Index)"
+  ) +
+  theme_minimal()
+```
+
+
+```{r}
+library(dplyr)
+#reload the data
+dmd_apnoea <- read_table("C:/Users/liusc/OneDrive/Desktop/Year 4/ASI/Coursework/dmd-apnoea.txt")
+
+# Summarize mean and standard deviation of AHI for each disease subtype
+summary_stats <- dmd_apnoea %>%
+  group_by(type) %>%
+  summarise(
+    mean_AHI = mean(ahi, na.rm = TRUE),
+    sd_AHI = sd(ahi, na.rm = TRUE)
+  )
+summary_stats
+
+```
+```{r}
+library(ggplot2)
+
+# Create histogram of AHI distribution
+ggplot(dmd_apnoea, aes(x = ahi)) +
+  geom_histogram(binwidth = 1, fill = "blue", color = "black", alpha = 0.7) +  # Adjust binwidth for clarity
+  labs(
+    x = "AHI",
+    y = "Frequency"
+  ) +
+  theme_minimal()
+
+```
+```{r}
+# Fit linear model
+model <- lm(ahi ~ ageyears + type + sex, data = dmd_apnoea)
+summary(model)
+
+```
+```{r}
+# Set up a 2x2 layout for the plots
+par(mfrow = c(2, 2))
+
+# Plot the four plots
+plot(model, which = 1)  # First plot
+plot(model, which = 2)  # Second plot
+plot(model, which = 3)  # Third plot
+plot(model, which = 5)  # Fifth plot)
+
+```
+
+
+
+```{r}
+model_interaction <- lm(ahi ~ ageyears * type, data = dmd_apnoea)
+summary(model_interaction)
+```
+
+```{r}
+par(mfrow = c(2, 2))
+
+plot(model_interaction, which = 1)
+plot(model_interaction, which = 2)
+plot(model_interaction, which = 3)
+plot(model_interaction, which = 5)
+```
+
+
+```{r}
+library(tidyverse)
+library(scales)
+
+dmd_apnoea <- dmd_apnoea %>%
+  mutate(age_group = cut(ageyears, breaks = seq(0, 70, by = 5), right = FALSE))
+
+group_stats <- dmd_apnoea %>%
+  group_by(age_group) %>%
+  summarise(
+    mean_AHI = mean(ahi, na.rm = TRUE),
+    var_AHI = var(ahi, na.rm = TRUE)
+  )
+
+log_group_stats <- group_stats %>%
+  mutate(
+    log_mean_AHI = log(mean_AHI),
+    log_var_AHI = log(var_AHI)
+  )
+
+ggplot(group_stats, aes(x = mean_AHI, y = var_AHI)) +
+  geom_point() +
+  scale_x_log10(labels = label_log()) +  
+  scale_y_log10(labels = label_log()) + 
+   geom_smooth(method = "lm", se = FALSE, color = "blue") +
+  labs(
+    x = "Log(Mean AHI)",
+    y = "Log(Variance of AHI)"
+  ) +
+  theme_minimal()
+
+log_model <- lm(log(var_AHI) ~ log(mean_AHI), data = group_stats)
+
+summary(log_model)
+
+```
+```{r}
+# Filter out zeros
+dmd_apnoea_nonzero <- dmd_apnoea %>% filter(ahi > 0)
+
+# Fit a Gamma GLM
+gamma_glm <- glm(ahi ~ ageyears + type + sex, 
+                 data = dmd_apnoea_nonzero, 
+                 family = Gamma(link = "log"))
+
+# Summary of the model
+summary(gamma_glm)
+
+```
+```{r}
+library(boot)
+
+set.seed(42)
+bootstrap_results <- boot::boot(data = dmd_apnoea_nonzero, 
+                                statistic = function(data, indices) {
+                                  model <- glm(ahi ~ ageyears + type, 
+                                               data = data[indices, ], 
+                                               family = Gamma(link = "log"))
+                                  coef(model)["ageyears"]
+                                },
+                                R = 1000)
+
+# Confidence interval
+boot.ci(bootstrap_results, type = "perc")
+```
+```{r}
+# Create a binary variable for severe sleep apnoea (AHI > 10)
+dmd_apnoea <- dmd_apnoea %>%
+  mutate(severe_apnoea = ifelse(ahi > 10, 1, 0))
+
+# Fit a logistic regression model
+model <- glm(severe_apnoea ~ ageyears + type, 
+             data = dmd_apnoea, 
+             family = binomial(link = "logit"))
+
+# Summary of the model to see coefficients
+summary(model)
+
+# Odds ratio for a 10-year increase in age
+age_effect <- exp(coef(model)["ageyears"] * 10)
+age_effect
+
+# To get a confidence interval for the odds ratio (using bootstrap)
+set.seed(42)
+bootstrap_results <- boot::boot(data = dmd_apnoea, 
+                                statistic = function(data, indices) {
+                                  model <- glm(severe_apnoea ~ ageyears + type, 
+                                               data = data[indices, ], 
+                                               family = binomial(link = "logit"))
+                                  exp(coef(model)["ageyears"] * 10)  # Exponentiate the age coefficient
+                                },
+                                R = 1000)
+
+# Confidence interval for the odds ratio
+boot.ci(bootstrap_results, type = "perc")
+
+```
+
+
+```{r}
+coef_estimates <- coef(summary(gamma_glm))
+conf_intervals <- confint(gamma_glm)
+gamma_glm <- glm(ahi ~ ageyears + type, 
+                 data = dmd_apnoea_nonzero, 
+                 family = Gamma(link = "log"))
+# Predict the mean AHI for individuals with DMD subtype at age 18
+age <- 18
+type <- "DMD"
+new_data <- data.frame(ageyears = 18, type = "DMD")
+
+# Predict mean AHI
+predicted_mean_log_ahi <- predict(gamma_glm, newdata = new_data, type = "link", se.fit = TRUE)
+predicted_mean_ahi <- exp(predicted_mean_log_ahi$fit)
+
+# Calculate confidence intervals for the mean AHI
+lower_ci_log <- predicted_mean_log_ahi$fit - 1.96 * predicted_mean_log_ahi$se.fit
+upper_ci_log <- predicted_mean_log_ahi$fit + 1.96 * predicted_mean_log_ahi$se.fit
+lower_ci_ahi <- exp(lower_ci_log)
+upper_ci_ahi <- exp(upper_ci_log)
+
+# Estimate proportion with severe sleep apnoea (AHI > 30) at age 18
+shape_param <- 1 / summary(gamma_glm)$deviance / summary(gamma_glm)$df.residual # Gamma shape parameter
+scale_param <- predicted_mean_ahi / shape_param # Scale parameter
+
+# Cumulative probability for AHI <= 30
+p_ahi_30 <- pgamma(30, shape = shape_param, scale = scale_param)
+
+# Proportion with severe sleep apnoea
+proportion_severe <- 1 - p_ahi_30
+proportion_severe_u <- 1 - pgamma(30, shape = shape_param, scale = lower_ci_ahi / shape_param )
+proportion_severe_d <- 1 - pgamma(30, shape = shape_param, scale = upper_ci_ahi / shape_param )
+
+# Display results
+list(
+  Predicted_Mean_AHI = predicted_mean_ahi,
+  CI_AHI = c(lower_ci_ahi, upper_ci_ahi),
+  Proportion_Severe = proportion_severe, 
+  CI_Proportion_Severe = c(proportion_severe_u, proportion_severe_d)
+)
+```
+```{r}
+coef_estimates <- coef(summary(gamma_glm))
+conf_intervals <- confint(gamma_glm)
+
+# Predict the mean AHI for individuals with DMD subtype at age 18
+age <- 60
+type <- "DMD"
+new_data <- data.frame(ageyears = age, type = type)
+
+# Predict mean AHI
+predicted_mean_log_ahi <- predict(gamma_glm, newdata = new_data, type = "link", se.fit = TRUE)
+predicted_mean_ahi <- exp(predicted_mean_log_ahi$fit)
+
+# Calculate confidence intervals for the mean AHI
+lower_ci_log <- predicted_mean_log_ahi$fit - 1.96 * predicted_mean_log_ahi$se.fit
+upper_ci_log <- predicted_mean_log_ahi$fit + 1.96 * predicted_mean_log_ahi$se.fit
+lower_ci_ahi <- exp(lower_ci_log)
+upper_ci_ahi <- exp(upper_ci_log)
+
+# Estimate proportion with severe sleep apnoea (AHI > 30) at age 18
+shape_param <- 1 / summary(gamma_glm)$deviance / summary(gamma_glm)$df.residual # Gamma shape parameter
+scale_param <- predicted_mean_ahi / shape_param # Scale parameter
+
+# Cumulative probability for AHI <= 30
+p_ahi_30 <- pgamma(30, shape = shape_param, scale = scale_param)
+
+# Proportion with severe sleep apnoea
+proportion_severe <- 1 - p_ahi_30
+proportion_severe_u <- 1 - pgamma(30, shape = shape_param, scale = lower_ci_ahi / shape_param )
+proportion_severe_d <- 1 - pgamma(30, shape = shape_param, scale = upper_ci_ahi / shape_param )
+
+# Display results
+list(
+  Predicted_Mean_AHI = predicted_mean_ahi,
+  CI_AHI = c(lower_ci_ahi, upper_ci_ahi),
+  Proportion_Severe = proportion_severe, 
+  CI_Proportion_Severe = c(proportion_severe_u, proportion_severe_d)
+)
+```
+```{r}
+# Simulating data
+set.seed(123)
+n <- 100
+x <- runif(n, 1, 10)  # Predictor variable
+y <- rgamma(n, shape = 2, rate = 1 / (0.5 + 0.3 * x))  # Gamma response variable
+
+# Fitting a Gamma GLM
+gamma_glm <- glm(y ~ x, family = Gamma(link = "log"))
+
+# Extracting deviance residuals
+deviance_residuals <- residuals(gamma_glm, type = "deviance")
+
+# Creating a deviance plot
+plot(
+  gamma_glm$fitted.values, deviance_residuals,
+  xlab = "Fitted Values",
+  ylab = "Deviance Residuals",
+  pch = 19,
+  col = "blue"
+)
+abline(h = 0, col = "red", lwd = 2)
+
+# Optionally: Adding a smoother for visualization
+lines(lowess(gamma_glm$fitted.values, deviance_residuals), col = "darkgreen", lwd = 2)
+
+```
+
+
+```{r}
+data_master <- read.csv("C:\\Users\\liusc\\OneDrive\\Desktop\\Year 4\\ASI\\Coursework\\oi-bmi.csv")
+# Rename columns for clarity
+colnames(data_master) <- c("X1", "X2")
+
+
+# Basic exploration
+summary(data_master)
+plot(data_master$X1, data_master$X2, 
+     xlab = "BMI", 
+     ylab = "Log OI during REM Sleep", 
+     pch = 16,        # Use solid dots
+     col = "blue",
+     cex = 0.7) 
+
+# Linear regression
+model_master<- lm(X2 ~ X1, data = data_master)
+summary(model_master)
+
+# Add regression line to plot
+abline(model_master, col = "black")
+
+# GEE model (requires geepack library)
+# Model diagnostics (for lm)
+par(mfrow = c(2, 2))
+
+# Plot the four plots
+plot(model_master, which = 1)  
+plot(model_master, which = 2)  
+plot(model_master, which = 3)  
+plot(model_master, which = 5) 
+```
+
+```{r}
+data_master$OI <- exp(data_master$X2)
+# Remove rows where X2_adjusted is zero or negative
+model_master_glm_unlogged <- glm(OI ~ X1, data = data_master, family = gaussian(link = "log"))
+summary(model_master_glm_unlogged)
+plot(data_master$X1, data_master$OI, 
+     xlab = "BMI", 
+     ylab = "OI", 
+     pch = 19, col = "blue")
+
+# Add the fitted line from the unlogged model
+fitted_values_unlogged <- predict(model_master_glm_unlogged, type = "response")
+lines(data_master$X1, fitted_values_unlogged, col = "red", lwd = 2)
+```
+```{r}
+data_master$OI <- exp(data_master$X2)
+model_master_glm_unlogged <- glm(OI ~ X1, data = data_master, family = Gamma(link = "log"))
+summary(model_master_glm_unlogged)
+plot(data_master$X1, data_master$OI, 
+     xlab = "BMI", 
+     ylab = "OI", 
+     pch = 19, col = "blue")
+
+# Add the fitted line from the unlogged model
+fitted_values_unlogged <- predict(model_master_glm_unlogged, type = "response")
+lines(data_master$X1, fitted_values_unlogged, col = "red", lwd = 2)
+```
+```{r}
+deviance_residuals <- residuals(model_master_glm_unlogged, type = "deviance")
+
+# Plot deviance residuals vs fitted values
+plot(fitted(model_master_glm_unlogged), deviance_residuals,
+     main = "Deviance Residuals vs Fitted Values",
+     xlab = "Fitted Values", ylab = "Deviance Residuals",
+     pch = 19, col = "blue")
+
+# Add a horizontal line at 0
+abline(h = 0, col = "red", lwd = 2)
+```
+
+
